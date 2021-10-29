@@ -56,6 +56,11 @@ public class MapController : MonoBehaviour, IOnEventCallback
         if (player.Position.y - i == another.Position.y) return true;
         return false;
     }
+    public bool isHaveEmptyCellBelow(Vector2Int position)
+    {
+        if (position.y > 0 && cells[position.x, position.y - 1].activeSelf) return false;
+        else return true;
+    }
 
     public void OnEvent(EventData photonEvent)
     {
@@ -63,7 +68,6 @@ public class MapController : MonoBehaviour, IOnEventCallback
         var pos = (Vector2Int)photonEvent.CustomData;
         cells[pos.x, pos.y].SetActive(false);
     }
-
     public void OnEnable() => PhotonNetwork.AddCallbackTarget(this);
     public void OnDisable() => PhotonNetwork.RemoveCallbackTarget(this);
 

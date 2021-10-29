@@ -3,12 +3,13 @@ using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
 
-public class PlayerControls : MonoBehaviour, IPunObservable
+public class PlayerControls : MonoBehaviour, IPunObservable, IOnEventCallback
 {
     public Vector2Int Position;
 
     [SerializeField] Transform ladder;
     [SerializeField] float moveCulldown = .9f;
+    [SerializeField] GameObject bonesPrefab;
 
     Vector2Int lastFramePosition;
     PhotonView view;
@@ -19,8 +20,17 @@ public class PlayerControls : MonoBehaviour, IPunObservable
 
     public void OnPhotonSerializeView(PhotonStream stream, PhotonMessageInfo info)
     {
-        if (stream.IsWriting) stream.SendNext(isRight);
-        else if (stream.IsReading) isRight = (bool)stream.ReceiveNext();
+        if (stream.IsWriting)
+        {
+            string massage = JsonUtility.ToJson(new netStream() { isRight = this.isRight, position = this.Position });
+            stream.SendNext(massage);
+        }
+        else if (stream.IsReading)
+        {
+            var mail = JsonUtility.FromJson<netStream>((string)stream.ReceiveNext());
+            isRight = mail.isRight;
+            Position = mail.position;
+        }
     }
 
     private void Start()
@@ -32,19 +42,13 @@ public class PlayerControls : MonoBehaviour, IPunObservable
         Position = new Vector2Int((int)transform.position.x, (int)transform.position.y);
         FindObjectOfType<MapController>().AddPlayer(this);
 
-        setLadderLength(0);
-
         if (!view.IsMine) render.color = Color.red; // enemy
     }
 
     private void Update()
     {
-        if (view.IsMine && map.isHavePlayerBelow(this) && PhotonNetwork.NetworkClientState != ClientState.Leaving) die();
-
         if (isRight) render.flipX = false;
         else render.flipX = true;
-
-        Position = new Vector2Int((int)transform.position.x, (int)transform.position.y);
         
         if (lastFramePosition != Position)
         {
@@ -53,12 +57,15 @@ public class PlayerControls : MonoBehaviour, IPunObservable
         }
 
         if (!view.IsMine) return;
-        if (PhotonNetwork.Time < lastTick + moveCulldown) return;
 
+        if (map.isHavePlayerBelow(this) && PhotonNetwork.NetworkClientState != ClientState.Leaving) die();
+
+        transform.position = Vector3.Lerp(new Vector3(Position.x, Position.y, 0), transform.position, .5f);
+
+        if (PhotonNetwork.Time < lastTick + moveCulldown) return;
         if (PhotonNetwork.CurrentRoom.PlayerCount != 2) return;
 
         var beforMovePos = Position;
-
         #region input and clamp pos
         if (Input.GetKeyDown(KeyCode.W))
             Position += Vector2Int.up;
@@ -80,13 +87,11 @@ public class PlayerControls : MonoBehaviour, IPunObservable
         if (Position.y < 0) Position.y = 0;
         if (Position.y > 9) Position.y = 9;
         #endregion
-
         if (Position == beforMovePos) return;
-        transform.position = new Vector3(Position.x, Position.y, 0);
 
         lastTick = PhotonNetwork.Time;
-        PhotonNetwork.RaiseEvent(42,
-            Position,
+
+        PhotonNetwork.RaiseEvent(42, Position,
             new RaiseEventOptions() { Receivers = ReceiverGroup.All },
             new SendOptions() { Reliability = true });
     }
@@ -103,6 +108,26 @@ public class PlayerControls : MonoBehaviour, IPunObservable
     void die()
     {
         Debug.Log("Death");
+        PhotonNetwork.RaiseEvent(34, Position,
+            new RaiseEventOptions { Receivers = ReceiverGroup.Others },
+            new SendOptions { Reliability = true });
         PhotonNetwork.LeaveRoom();
     }
+    // Важно! на другом компе вызывается два раза событие и не локальным убитым, и локальным убийцей
+    public void OnEvent(EventData photonEvent)
+    {
+        if (photonEvent.Code != 34) return;
+        var pos = (Vector2Int)photonEvent.CustomData;
+        if (Position != pos) return;
+        var bonesObj = Instantiate(bonesPrefab, new Vector3Int(pos.x, pos.y, 0), Quaternion.identity);
+        bonesObj.GetComponent<Bones>().InitBones(map, PhotonNetwork.Time, pos);
+    }
+    void OnEnable() => PhotonNetwork.AddCallbackTarget(this);
+    void OnDisable() => PhotonNetwork.RemoveCallbackTarget(this);
+}
+
+public struct netStream
+{
+    public bool isRight;
+    public Vector2Int position;
 }
